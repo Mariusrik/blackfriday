@@ -77,6 +77,8 @@ const (
 type HTMLRendererParameters struct {
 	// Prepend this text to each relative URL.
 	AbsolutePrefix string
+	// Prepend this to all localUrls. Made because AbsolutePrefix is does not work with ./ and also prepends # new parameter made to prevent breaking change
+	LocalURLPrefix string
 	// Add this text to each footnote anchor, to ensure uniqueness.
 	FootnoteAnchorPrefix string
 	// Show this text inside the <a> tag for a footnote return link, if the
@@ -245,6 +247,32 @@ func isRelativeLink(link []byte) (yes bool) {
 	return false
 }
 
+//similar to isRelativeLink but without #
+func isLocalLink(link []byte) (yes bool) {
+
+	// link begin with '/' but not '//', the second maybe a protocol relative link
+	if len(link) >= 2 && link[0] == '/' && link[1] != '/' {
+		return true
+	}
+
+	// only the root '/'
+	if len(link) == 1 && link[0] == '/' {
+		return true
+	}
+
+	// current directory : begin with "./"
+	if bytes.HasPrefix(link, []byte("./")) {
+		return true
+	}
+
+	// parent directory : begin with "../"
+	if bytes.HasPrefix(link, []byte("../")) {
+		return true
+	}
+
+	return false
+}
+
 func (r *HTMLRenderer) ensureUniqueHeadingID(id string) string {
 	for count, found := r.headingIDs[id]; found; count, found = r.headingIDs[id] {
 		tmp := fmt.Sprintf("%s-%d", id, count+1)
@@ -262,6 +290,35 @@ func (r *HTMLRenderer) ensureUniqueHeadingID(id string) string {
 	}
 
 	return id
+}
+
+/*func (r *HTMLRenderer) addPrefix(link []byte) []byte {
+	log.Printf("AbsolutePrefix: %v", r.AbsolutePrefix)
+	log.Printf("LocalURLPrefix: %v", r.LocalURLPrefix)
+	if r.AbsolutePrefix != "" {
+		return addAbsPrefix(link, r.AbsolutePrefix)
+	}
+	if r.LocalURLPrefix != "" {
+		return addLocalURLPrefix(link, r.LocalURLPrefix)
+	}
+	return link
+}*/
+
+func (r *HTMLRenderer) addLocalURLPrefix(link []byte) []byte {
+	if r.LocalURLPrefix != "" && isLocalLink(link) {
+		newDest := r.LocalURLPrefix
+		linkStr := string(link)
+		if link[0] != '/' {
+			newDest += "/"
+		}
+		if link[0] == '.' && link[1] != '.' {
+			newDest += linkStr[2:len(linkStr)]
+			return []byte(newDest)
+		}
+		newDest += linkStr
+		return []byte(newDest)
+	}
+	return link
 }
 
 func (r *HTMLRenderer) addAbsPrefix(link []byte) []byte {
@@ -562,6 +619,7 @@ func (r *HTMLRenderer) RenderNode(w io.Writer, node *Node, entering bool) WalkSt
 		} else {
 			if entering {
 				dest = r.addAbsPrefix(dest)
+				dest = r.addLocalURLPrefix(dest)
 				var hrefBuf bytes.Buffer
 				hrefBuf.WriteString("href=\"")
 				escLink(&hrefBuf, dest)
@@ -594,6 +652,7 @@ func (r *HTMLRenderer) RenderNode(w io.Writer, node *Node, entering bool) WalkSt
 		if entering {
 			dest := node.LinkData.Destination
 			dest = r.addAbsPrefix(dest)
+			dest = r.addLocalURLPrefix(dest)
 			if r.disableTags == 0 {
 				//if options.safe && potentiallyUnsafe(dest) {
 				//out(w, `<img src="" alt="`)
